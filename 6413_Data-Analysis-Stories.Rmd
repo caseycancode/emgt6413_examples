@@ -1,0 +1,249 @@
+---
+title: "Data Analysis Stories"
+author: "Casey Canfield"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document: default
+---
+
+In this file, I will demonstrate how to perform the data analysis stories. This project uses data from:
+
+Ludwig, J., Duncan, G. J., Gennetian, L. A., Katz, L. F., Kessler, R. C., Kling, J. R., and Sanbonmatsu, L. (2012). Neighborhood effects on the long-term well-being of low-income adults. *Science*, 337(6101), 1505–1510. 
+
+The data is available at the [National Bureau of Economic Research website](http://www.nber.org/mtopuf/). You should download the Cell-Level PUF (Public Use Files) for the *Science* paper that was last updated on 9/21/2012.
+
+First, I call any needed libraries.
+
+```{r message=FALSE}
+
+
+# LIBRARIES
+# install.packages() if needed
+
+library(tidyverse) # always
+library(haven) # for read_dta
+library(car) # for qqPlot
+library(Hmisc) # for rcorr
+```
+
+Then I import data.
+
+```{r results ='hide'}
+# using results ='hide' makes it so that this doesn't have an output
+# when you knit to pdf
+
+# IMPORT DATA
+mto_data <- read_dta("Data/mto_sci_puf_cells_20130206.dta") 
+mto_data
+
+# CLEAN
+str(mto_data$ra_group)
+mto_data$ra_group <- as_factor(mto_data$ra_group)
+# ra_group needs to be a factor so that R 
+# understands it's a categorical variable
+
+# SUMMARY STATS
+#summary(mto_data)
+#names(mto_data) # names of all the variables in order
+#objects(mto_data) # names in alphabetical order
+```
+
+Now I can perform the data analysis stories!
+
+\pagebreak
+
+# Data Summary Story
+
+```{r}
+# histogram showing how subjective happiness changes 
+# depending on the experimental group
+
+# identify the appropriate bin size
+bw <- density(mto_data$mn_happy_scale123_z_ad, 
+              kernel = "gaussian", 
+              bw = "ucv")$bw
+
+# plot histograms on top of each other
+ggplot(mto_data, aes(x = mn_happy_scale123_z_ad, 
+                     color = ra_group, 
+                     fill=ra_group)) +
+  geom_histogram(position="identity", 
+                 binwidth = bw, 
+                 alpha=0.5) + 
+  theme_bw() +
+  xlab("Experimental Group") + ylab("Subjective Happiness")
+```
+
+\pagebreak
+
+Sometimes histograms are easier to see when they are separated. We want to understand the distributions of the data.
+
+```{r}
+# use facets to plot the histograms separately
+ggplot(mto_data, aes(x=mn_happy_scale123_z_ad)) +
+  geom_histogram(color="black", 
+                 fill="white", 
+                 binwidth = bw) +
+  facet_grid(ra_group ~ .) + 
+  theme_bw() +
+  xlab("Experimental Group") + ylab("Subjective Happiness")
+```
+
+\pagebreak
+
+Using box plots, we can better understand medians and outliers.
+
+```{r}
+# boxplot
+ggplot(mto_data, aes(x = ra_group, y = mn_happy_scale123_z_ad)) +
+  geom_boxplot() + 
+  theme_bw() +
+  xlab("Experimental Group") + ylab("Subjective Happiness")
+```
+
+\pagebreak
+
+Bar plots are useful for understanding categorical variables.
+```{r}
+ggplot(mto_data, aes(x = ra_group)) +
+  geom_bar() + 
+  theme_bw() +
+  xlab("Experimental Group") + ylab("Number of Observations")
+```
+
+
+\pagebreak
+
+Scatter plots help us understand the relationship between two variables
+
+```{r}
+# scatter plot with regression line
+ggplot(mto_data, aes(x = mn_f_ec_idx_z_ad, y = mn_happy_scale123_z_ad)) +
+  geom_point() + 
+  geom_smooth(method='lm') + 
+  theme_bw() +
+  xlab("Economic Self-Sufficiency Index") + ylab("Subjective Happiness")
+```
+
+\pagebreak
+
+# Conditional Distribution Story
+
+```{r}
+# plot cumulative distribution
+# compare data to Normal distribution
+
+distribution_info <- mto_data %>%
+  group_by(ra_group) %>%
+  summarise(mean = mean(mn_happy_scale123_z_ad),
+            sd = sd(mn_happy_scale123_z_ad))
+
+set.seed(1) # Set seed for the random number generator, to reproduce results 
+n.experimental <- as_tibble(rnorm(10000, 
+                                  distribution_info$mean[1], 
+                                  distribution_info$sd[1]))
+n.section8 <- rnorm(10000, 
+                    distribution_info$mean[2], 
+                    distribution_info$sd[2])
+n.control <- rnorm(10000, 
+                   distribution_info$mean[3], 
+                   distribution_info$sd[3])
+
+# just plot experimental group data for now
+mto_data %>%
+  filter(ra_group == "1=Low-Poverty Voucher/Experimental") %>%
+ggplot(aes(x = mn_happy_scale123_z_ad)) + 
+  stat_ecdf(geom = "point") + 
+  theme_bw() +
+  xlab("Subjective Happiness (Experimental Group)") + ylab("Cumulative Probability") +
+  stat_ecdf(aes(value), n.experimental)
+```
+
+
+```{r}
+mto_reg <- lm(mn_happy_scale123_z_ad ~ mn_f_ec_idx_z_ad, data = mto_data)
+summary(mto_reg)
+
+# q-q plot
+qqPlot(mto_reg)
+```
+
+\pagebreak
+
+# Forecasting Story
+
+```{r}
+# cross validation
+
+complex <- c() # Create an empty vector 
+simple <- c()
+set.seed(11)
+
+for(i in 1:10){  # Loop i from 1 to 100
+  train <- sample(mto_data$cell_id, 
+                  2*length(mto_data$cell_id)/3, 
+                  replace = FALSE)
+  test <- mto_data$cell_id[ - train] 
+  train1 <- lm(mn_happy_scale123_z_ad ~ mn_f_ec_idx_z_ad,
+               data = mto_data[mto_data$cell_id %in% train, ]) 
+  train2 <- lm(mn_happy_scale123_z_ad ~ 1,
+               data = mto_data[mto_data$cell_id %in% train, ])
+  test1 <- (mto_data$mn_happy_scale123_z_ad[mto_data$cell_id %in% test] -
+              predict(train1, mto_data[mto_data$cell_id %in% test, ]))^2
+  test2 <- (mto_data$mn_happy_scale123_z_ad[mto_data$cell_id %in% test] -
+              predict(train2,mto_data[mto_data$cell_id %in% test, ]))^2
+  rMSEtest1 <- sqrt(sum(test1)/length(test1)) 
+  rMSEtest2 <- sqrt(sum(test2)/length(test2))
+  # Append the rMSE from this iteration to vectors 
+  complex <- append(complex, rMSEtest1)
+  simple <- append(simple, rMSEtest2)
+}
+
+summary(complex)
+summary(simple)
+```
+
+\pagebreak
+
+# Statistical Inference Story
+```{r}
+# correlation
+rcorr(as.matrix(mto_data[,c("mn_happy_scale123_z_ad", "mn_f_ec_idx_z_ad")]))
+
+# hypothesis testing
+
+# t.test
+experimental <- mto_data %>%
+  filter(ra_group == "1=Low-Poverty Voucher/Experimental")
+control <- mto_data %>%
+  filter(ra_group == "3=Control")
+t.test(experimental$mn_happy_scale123_z_ad, 
+       control$mn_happy_scale123_z_ad)
+
+# regression
+mto_group_lm <- lm(mn_happy_scale123_z_ad ~ ra_group, 
+                    data = mto_data)
+summary(mto_group_lm)
+
+# ANOVA
+mto_group_aov <- aov(mn_happy_scale123_z_ad ~ ra_group, 
+                    data = mto_data) 
+summary(mto_group_aov)
+# post hoc test
+TukeyHSD(mto_group_aov, which = 'ra_group')
+```
+
+```{r}
+# resampling with bootstrap
+
+# jacknife residuals plot
+ggplot(mto_data, aes(x = fitted(mto_reg), y = rstudent(mto_reg))) +
+  geom_point() + 
+  geom_hline(yintercept = 0)
+```
+
+\pagebreak
+
+# Causal Inference Story
+
+There's no R code for this story. 
